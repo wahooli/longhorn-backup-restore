@@ -8,8 +8,13 @@ VOLUME ["${configPath}"]
 RUN useradd -ms /bin/bash $user
 RUN apt-get -qq update && apt-get -qq install --no-install-recommends -y \
     curl \
+    && rm -rf /var/lib/apt/lists/* \
     && mkdir -p $configPath \
     && chown -R $user:$user $configPath
+
+# install kubectl
+RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
+    install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 
 USER $user
 WORKDIR /home/$user
@@ -28,5 +33,6 @@ ENV LONGHORN_URL="http://longhorn-frontend.longhorn-system/v1"
 
 COPY longhorn_common.py .
 COPY backup-restore-bulk.py .
+COPY bulk-entrypoint.sh /
 
-ENTRYPOINT ["python3", "backup-restore-bulk.py"]
+ENTRYPOINT ["/bulk-entrypoint.sh"]
