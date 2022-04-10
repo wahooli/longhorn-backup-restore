@@ -10,20 +10,11 @@ with open(os.getenv('CONFIG_PATH')) as json_file:
     jsonData = json.load(json_file)
     longhornUrl = os.getenv('LONGHORN_URL')
     client = longhorn.Client(url=longhornUrl)
-
+    wait_detached_vols = []
+    volume_kstatus = {}
     for volumeHandle in jsonData: 
         existingVolume = client.by_id_volume(id=volumeHandle)
         if not existingVolume:
-            createPV = True
-            createPVC = True
-            groups = []
-            if "createPV" in jsonData[volumeHandle]:
-                createPV = jsonData[volumeHandle]["createPV"]
-            if "createPVC" in jsonData[volumeHandle]:
-                createPVC = jsonData[volumeHandle]["createPVC"]
-            if "groups" in jsonData[volumeHandle]:
-                groups = jsonData[volumeHandle]["groups"]
-
             print("Volume handle \"%s\" not found, restoring" % volumeHandle)
             bv = client.by_id_backupVolume(id=volumeHandle)
             if bv.lastBackupName:
@@ -36,7 +27,26 @@ with open(os.getenv('CONFIG_PATH')) as json_file:
             else:
                 volumeSize = bv.size
             url = lastBackup.url
-            kStatus = json.loads(lastBackup.labels.KubernetesStatus)
+            volume_kstatus[volumeHandle] = json.loads(lastBackup.labels.KubernetesStatus)
+
+            client.create_volume(name=volumeHandle, size=volumeSize,
+                                    fromBackup=url)
+            wait_detached_vols.append(volumeHandle)
+        else:
+            print("Volume handle %s exists, skipping" % volumeHandle)
+
+    for volumeHandle in jsonData:
+        if volumeHandle in wait_detached_vols:
+            createPV = True
+            createPVC = True
+            kStatus = volume_kstatus[volumeHandle]
+            groups = []
+            if "createPV" in jsonData[volumeHandle]:
+                createPV = jsonData[volumeHandle]["createPV"]
+            if "createPVC" in jsonData[volumeHandle]:
+                createPVC = jsonData[volumeHandle]["createPVC"]
+            if "groups" in jsonData[volumeHandle]:
+                groups = jsonData[volumeHandle]["groups"]
 
             if "pvName" in jsonData[volumeHandle]:
                 pvName = jsonData[volumeHandle]["pvName"]
@@ -53,8 +63,6 @@ with open(os.getenv('CONFIG_PATH')) as json_file:
             else:
                 pvcNamespace = kStatus["namespace"]
 
-            client.create_volume(name=volumeHandle, size=volumeSize,
-                                    fromBackup=url)
             volume = longhorn_common.wait_for_volume_detached(client, volumeHandle)
             print("Restored volume %s" % volumeHandle)
             if groups:
@@ -67,5 +75,3 @@ with open(os.getenv('CONFIG_PATH')) as json_file:
             if createPVC:
                 longhorn_common.create_pvc_for_volume(client, pvcNamespace, volume, pvcName)
                 print("Restored PersistentVolumeClaim %s" % pvcNamespace)
-        else:
-            print("Volume handle %s exists, skipping" % volumeHandle)
